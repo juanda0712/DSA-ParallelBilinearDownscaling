@@ -110,4 +110,18 @@ puts "Start enviado. Revisa start_proc_pulse en SignalTap."
 puts "\n===== TEST STATUS ====="
 test_reg 0xF7 0x03   ;# busy=1, done=1 (solo prueba)
 
+
+puts "\n===== TEST FSM ====="
+# Poner step_mode = 1 (F9 bit1)
+test_reg 0xF9 0x02
+
+# Iniciar (F6 bit0)
+test_reg 0xF6 0x01
+
+# Generar pulso (F9 bit0 = 1) -> pulse + auto-clear
+test_reg 0xF9 0x03   ;# set bit0=1 and bit1=1
+test_reg 0xF9 0x02   ;# clear bit0 (return to step_mode)
+# Repetir el set/clear para más pasos
+
+
 puts "\n===== FIN ====="

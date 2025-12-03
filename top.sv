@@ -1,4 +1,4 @@
-// top.sv
+// top_with_control.sv
 module top (
     input  logic CLOCK_50,
     input  logic reset_n
@@ -23,8 +23,12 @@ module top (
     logic step_mode;
     logic step_pulse;
     logic start_proc_pulse;
-    logic busy;
-    logic done;
+    logic busy_jtag;
+    logic done_jtag;
+
+    // ---- Señales de control_unit (separadas para debug) ----
+    logic busy_ctrl;
+    logic done_ctrl;
 
     // ---- Instancia Virtual JTAG ----
     vJtag vjtag_inst (
@@ -43,7 +47,7 @@ module top (
         .virtual_state_uir(v_uir)
     );
 
-    // ---- Instancia connect (JTAG front-end que conecta al MMIO y step unit) ----
+    // ---- Instancia connect (tu JTAG front-end, sin modificaciones) ----
     connect jtag_unit (
         .tck(tck),
         .tdi(tdi),
@@ -61,14 +65,27 @@ module top (
         .mem_data_in(mem_data_in),
         .mem_data_out(mem_data_out),
 
-        // STEP outputs
+        // STEP outputs (provienen del regfile / stepping unit dentro de connect)
         .step_mode(step_mode),
         .step_pulse(step_pulse),
 
-        // Observabilidad
+        // Observabilidad del regfile (no usaremos para el control unit, pero quedan disponibles)
         .start_proc_pulse(start_proc_pulse),
-        .busy(busy),
-        .done(done)
+        .busy(busy_jtag),
+        .done(done_jtag)
+    );
+
+    // ---- Instancia control_unit (Fase 3) ----
+    // Usar CLOCK_50 como reloj aquí para que no dependa del TCK (TCK es JTAG clock, mejor usar CLOCK_50)
+    // Ajusta CYCLES según necesites o conéctalo a width*height en iteraciones posteriores.
+    control_unit #(.CYCLES(200)) cu_inst (
+        .clk(CLOCK_50),
+        .aclr_n(reset_n),
+        .start_proc_pulse(start_proc_pulse),
+        .step_mode(step_mode),
+        .step_pulse(step_pulse),
+        .busy(busy_ctrl),
+        .done(done_ctrl)
     );
 
     // ---- Memoria simple ----
@@ -80,7 +97,9 @@ module top (
         .data_out(mem_data_out)
     );
 
-    // (Opcional) conectar start_proc_pulse a un LED o pin de debug temporalmente
-    // wire debug_led = start_proc_pulse;
+    // ---- Debug / LEDs (opcional) ----
+    // Si quieres conectar a pines físicos, conecta busy_ctrl / done_ctrl aquí
+    // wire led_busy = busy_ctrl;
+    // wire led_done = done_ctrl;
 
 endmodule
