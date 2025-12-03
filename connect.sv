@@ -8,97 +8,117 @@ module connect(
     input  logic        v_cdr,
     input  logic        v_uir,
 
-    // LEDs y switches originales
-    input  logic [3:0]  switches,
     output logic        tdo,
-    output logic [7:0]  leds,
 
-    // Señales nuevas hacia la memoria
+    // Mem interface
     output logic        mem_we,
     output logic [7:0]  mem_addr,
     output logic [7:0]  mem_data_in,
     input  logic [7:0]  mem_data_out
 );
 
-    // Instrucciones JTAG
+    // -------------------------------
+    //  INSTRUCCIONES JTAG
+    // -------------------------------
     typedef enum logic [1:0] {
         BYPASS = 2'b00,
-        DIP    = 2'b01,
-        LED    = 2'b10,
+        IR     = 2'b01,
         MEM    = 2'b11
     } jtag_instr_e;
 
     jtag_instr_e current_instr;
     assign current_instr = jtag_instr_e'(ir_in);
 
-    // Registers
-    logic [1:0]  DR0;     // bypass
-    logic [7:0]  DR1;     // LED/DIP
-    logic [15:0] DR_MEM;  // memory access
+    // -------------------------------
+    //  DR REGISTERS
+    // -------------------------------
+    logic [1:0]  DR0;         // BYPASS
+    logic [15:0] DR_MEM;      // [15:8] addr, [7:0] data
+    logic [15:0] DR_IR;       // [15:12] unused, [11:8] index, [7:0] value
 
-    logic [7:0] led_output_reg;
+    // -------------------------------
+    //  MEM signals
+    // -------------------------------
+    assign mem_addr    = DR_MEM[15:8];
+    assign mem_data_in = DR_MEM[7:0];
+    assign mem_we      = (current_instr == MEM) && v_udr;
 
-    assign leds = led_output_reg;
+    // -------------------------------
+    //  REGFILE
+    // -------------------------------
+    logic [7:0] regfile [0:15];
+    integer ii;
 
-    // Memory interface decode
-    assign mem_addr     = DR_MEM[15:8];
-    assign mem_data_in  = DR_MEM[7:0];
-    assign mem_we       = (current_instr == MEM) && v_udr;
-
-    // TDO mux
+    // -------------------------------
+    //  TDO MUX
+    // -------------------------------
     always_comb begin
         case (current_instr)
             BYPASS: tdo = DR0[0];
-            DIP,
-            LED:    tdo = DR1[0];
             MEM:    tdo = DR_MEM[0];
-            default: tdo = DR0[0];
+            IR:     tdo = DR_IR[0];
+            default: tdo = 1'b0;
         endcase
     end
 
-    // Shifting
+    // -------------------------------
+    //  SHIFT & CAPTURE
+    // -------------------------------
     always_ff @(posedge tck or negedge aclr) begin
         if (!aclr) begin
-            DR0 <= '0;
-            DR1 <= '0;
+            DR0    <= '0;
             DR_MEM <= 16'h0000;
+            DR_IR  <= 16'h0000;
         end
         else begin
             case (current_instr)
 
-                DIP: begin
-                    if (v_cdr)
-                        DR1 <= {4'b0000, switches};
-                    else if (v_sdr)
-                        DR1 <= {tdi, DR1[7:1]};
-                end
-
-                LED: begin
-                    if (v_sdr)
-                        DR1 <= {tdi, DR1[7:1]};
-                end
-
+                // ---------------- BYPASS ----------------
                 BYPASS: begin
                     if (v_sdr)
                         DR0 <= {tdi, DR0[1]};
                 end
 
+                // ---------------- MEM ----------------
                 MEM: begin
                     if (v_sdr)
                         DR_MEM <= {tdi, DR_MEM[15:1]};
                     else if (v_cdr)
                         DR_MEM <= {DR_MEM[15:8], mem_data_out};
                 end
+
+                // ---------------- IR (REGISTROS) ----------------
+                IR: begin
+                    if (v_sdr)
+                        DR_IR <= {tdi, DR_IR[15:1]};
+                    else if (v_cdr)
+                        DR_IR <= {DR_IR[15:8], regfile[DR_IR[11:8]]};
+                end
+
             endcase
         end
     end
 
-    // LED output update
+    // -------------------------------
+    //  UPDATE (solo acciones)
+    // -------------------------------
     always_ff @(posedge v_udr or negedge aclr) begin
-        if (!aclr)
-            led_output_reg <= '0;
-        else if (current_instr == LED)
-            led_output_reg <= DR1;
+        if (!aclr) begin
+            for (ii = 0; ii < 16; ii++)
+                regfile[ii] <= 8'h00;
+        end
+        else begin
+            case (current_instr)
+
+                // WRITE REG
+                IR: begin
+                    regfile[DR_IR[11:8]] <= DR_IR[7:0];
+                end
+
+                // WRITE MEM: ya lo hace mem_we
+
+            endcase
+        end
     end
 
 endmodule

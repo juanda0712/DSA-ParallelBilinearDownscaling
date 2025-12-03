@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <deploy
- date="2025.11.28.12:57:06"
+ date="2025.12.03.03:33:18"
  outputDirectory="C:/Users/JuanDa/Documents/SEMESTRES/2025IIS/Arqui2/proyecto2/GuiaJtag-master/GuiaJtag-master/vJtag/">
  <perimeter>
   <parameter
@@ -24,13 +24,13 @@
   <parameter
      name="AUTO_DEVICE"
      type="String"
-     defaultValue="5CSXFC6D6F31C6"
+     defaultValue="5CSEMA5F31C6"
      onHdl="0"
      affectsHdl="1" />
   <parameter
      name="AUTO_DEVICE_SPEEDGRADE"
      type="String"
-     defaultValue="6_H6"
+     defaultValue="6"
      onHdl="0"
      affectsHdl="1" />
   <interface name="jtag" kind="conduit" start="0">
@@ -92,16 +92,16 @@
  </perimeter>
  <entity
    path=""
-   parameterizationKey="vJtag:1.0:AUTO_DEVICE=5CSXFC6D6F31C6,AUTO_DEVICE_FAMILY=Cyclone V,AUTO_DEVICE_SPEEDGRADE=6_H6,AUTO_GENERATION_ID=1764356226,AUTO_UNIQUE_ID=(altera_virtual_jtag:23.1:CREATE_PRIMITIVE_JTAG_STATE_SIGNAL_PORTS=false,device_family=Cyclone V,gui_use_auto_index=true,sld_auto_instance_index=YES,sld_instance_index=0,sld_ir_width=2)"
+   parameterizationKey="vJtag:1.0:AUTO_DEVICE=5CSEMA5F31C6,AUTO_DEVICE_FAMILY=Cyclone V,AUTO_DEVICE_SPEEDGRADE=6,AUTO_GENERATION_ID=1764754398,AUTO_UNIQUE_ID=(altera_virtual_jtag:23.1:CREATE_PRIMITIVE_JTAG_STATE_SIGNAL_PORTS=false,device_family=Cyclone V,gui_use_auto_index=true,sld_auto_instance_index=YES,sld_instance_index=0,sld_ir_width=2)"
    instancePathKey="vJtag"
    kind="vJtag"
    version="1.0"
    name="vJtag">
-  <parameter name="AUTO_GENERATION_ID" value="1764356226" />
-  <parameter name="AUTO_DEVICE" value="5CSXFC6D6F31C6" />
+  <parameter name="AUTO_GENERATION_ID" value="1764754398" />
+  <parameter name="AUTO_DEVICE" value="5CSEMA5F31C6" />
   <parameter name="AUTO_DEVICE_FAMILY" value="Cyclone V" />
   <parameter name="AUTO_UNIQUE_ID" value="" />
-  <parameter name="AUTO_DEVICE_SPEEDGRADE" value="6_H6" />
+  <parameter name="AUTO_DEVICE_SPEEDGRADE" value="6" />
   <generatedFiles>
    <file
        path="C:/Users/JuanDa/Documents/SEMESTRES/2025IIS/Arqui2/proyecto2/GuiaJtag-master/GuiaJtag-master/vJtag/synthesis/vJtag.v"
