@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <deploy
- date="2025.12.03.11:21:50"
- outputDirectory="C:/Users/JuanDa/Documents/SEMESTRES/2025IIS/Arqui2/proyecto2/GuiaJtag-master/GuiaJtag-master/vJtag/">
+ date="2025.12.03.17:37:25"
+ outputDirectory="C:/Users/JuanDa/Documents/SEMESTRES/2025IIS/Arqui2/proyecto2/GuiaJtag-master/DSA-ParallelBilinearDownscaling/vJtag/">
  <perimeter>
   <parameter
      name="AUTO_GENERATION_ID"
@@ -92,25 +92,25 @@
  </perimeter>
  <entity
    path=""
-   parameterizationKey="vJtag:1.0:AUTO_DEVICE=5CSEMA5F31C6,AUTO_DEVICE_FAMILY=Cyclone V,AUTO_DEVICE_SPEEDGRADE=6,AUTO_GENERATION_ID=1764782510,AUTO_UNIQUE_ID=(altera_virtual_jtag:23.1:CREATE_PRIMITIVE_JTAG_STATE_SIGNAL_PORTS=false,device_family=Cyclone V,gui_use_auto_index=true,sld_auto_instance_index=YES,sld_instance_index=0,sld_ir_width=3)"
+   parameterizationKey="vJtag:1.0:AUTO_DEVICE=5CSEMA5F31C6,AUTO_DEVICE_FAMILY=Cyclone V,AUTO_DEVICE_SPEEDGRADE=6,AUTO_GENERATION_ID=1764805044,AUTO_UNIQUE_ID=(altera_virtual_jtag:23.1:CREATE_PRIMITIVE_JTAG_STATE_SIGNAL_PORTS=false,device_family=Cyclone V,gui_use_auto_index=true,sld_auto_instance_index=YES,sld_instance_index=0,sld_ir_width=3)"
    instancePathKey="vJtag"
    kind="vJtag"
    version="1.0"
    name="vJtag">
-  <parameter name="AUTO_GENERATION_ID" value="1764782510" />
+  <parameter name="AUTO_GENERATION_ID" value="1764805044" />
   <parameter name="AUTO_DEVICE" value="5CSEMA5F31C6" />
   <parameter name="AUTO_DEVICE_FAMILY" value="Cyclone V" />
   <parameter name="AUTO_UNIQUE_ID" value="" />
   <parameter name="AUTO_DEVICE_SPEEDGRADE" value="6" />
   <generatedFiles>
    <file
-       path="C:/Users/JuanDa/Documents/SEMESTRES/2025IIS/Arqui2/proyecto2/GuiaJtag-master/GuiaJtag-master/vJtag/synthesis/vJtag.v"
+       path="C:/Users/JuanDa/Documents/SEMESTRES/2025IIS/Arqui2/proyecto2/GuiaJtag-master/DSA-ParallelBilinearDownscaling/vJtag/synthesis/vJtag.v"
        type="VERILOG" />
   </generatedFiles>
   <childGeneratedFiles/>
   <sourceFiles>
    <file
-       path="C:/Users/JuanDa/Documents/SEMESTRES/2025IIS/Arqui2/proyecto2/GuiaJtag-master/GuiaJtag-master/vJtag.qsys" />
+       path="C:/Users/JuanDa/Documents/SEMESTRES/2025IIS/Arqui2/proyecto2/GuiaJtag-master/DSA-ParallelBilinearDownscaling/vJtag.qsys" />
   </sourceFiles>
   <childSourceFiles>
    <file
