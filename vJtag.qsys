@@ -65,7 +65,7 @@
   <parameter name="device_family" value="Cyclone V" />
   <parameter name="gui_use_auto_index" value="true" />
   <parameter name="sld_instance_index" value="0" />
-  <parameter name="sld_ir_width" value="2" />
+  <parameter name="sld_ir_width" value="3" />
  </module>
  <interconnectRequirement for="$system" name="qsys_mm.clockCrossingAdapter" value="HANDSHAKE" />
  <interconnectRequirement for="$system" name="qsys_mm.enableEccProtection" value="FALSE" />

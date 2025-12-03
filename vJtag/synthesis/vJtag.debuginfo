@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <EnsembleReport name="vJtag" kind="system" version="23.1" fabric="QSYS">
  <!-- Format version 23.1 993 (Future versions may contain additional information.) -->
- <!-- 2025.12.03.03:33:18 -->
+ <!-- 2025.12.03.11:21:50 -->
  <!-- A collection of modules and connections -->
  <parameter name="clockCrossingAdapter">
   <type>com.altera.sopcmodel.ensemble.EClockAdapter</type>
@@ -53,7 +53,7 @@
  </parameter>
  <parameter name="generationId">
   <type>int</type>
-  <value>1764754398</value>
+  <value>1764782510</value>
   <derived>false</derived>
   <enabled>true</enabled>
   <visible>true</visible>
@@ -189,7 +189,7 @@ the requested settings for a module instance. -->
   </parameter>
   <parameter name="sld_ir_width">
    <type>int</type>
-   <value>2</value>
+   <value>3</value>
    <derived>false</derived>
    <enabled>true</enabled>
    <visible>true</visible>
@@ -272,13 +272,13 @@ parameters are a RESULT of the module parameters. -->
    <port>
     <name>ir_in</name>
     <direction>Output</direction>
-    <width>2</width>
+    <width>3</width>
     <role>ir_in</role>
    </port>
    <port>
     <name>ir_out</name>
     <direction>Input</direction>
-    <width>2</width>
+    <width>3</width>
     <role>ir_out</role>
    </port>
    <port>
@@ -425,5 +425,5 @@ parameters are a RESULT of the module parameters. -->
   <version>23.1</version>
  </plugin>
  <reportVersion>23.1 993</reportVersion>
- <uniqueIdentifier>047C16BBF3950000019AE38F1CF5</uniqueIdentifier>
+ <uniqueIdentifier>047C16BBF3950000019AE53C1200</uniqueIdentifier>
 </EnsembleReport>

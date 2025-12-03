@@ -1,22 +1,30 @@
+// top.sv
 module top (
     input  logic CLOCK_50,
     input  logic reset_n
 );
 
     // ---- Señales JTAG ----
-    logic        tck;
-    logic        tdi;
-    logic        tdo;
-    logic [1:0]  ir_in;   // AHORA 2 BITS
-    logic [1:0]  ir_out;
-    logic        v_cdr, v_sdr, v_udr, v_uir;
-    logic        v_e1dr, v_e2dr, v_pdr, v_cir;
+    logic tck;
+    logic tdi;
+    logic tdo;
+    logic [2:0] ir_in;
+    logic [2:0] ir_out;
+    logic v_cdr, v_sdr, v_udr, v_uir;
+    logic v_e1dr, v_e2dr, v_pdr, v_cir;
 
-    // ---- Memoria ----
-    logic        mem_we;
-    logic [7:0]  mem_addr;
-    logic [7:0]  mem_data_in;
-    logic [7:0]  mem_data_out;
+    // ---- Mem interface ----
+    logic mem_we;
+    logic [7:0] mem_addr;
+    logic [7:0] mem_data_in;
+    logic [7:0] mem_data_out;
+
+    // ---- Señales de control / observabilidad ----
+    logic step_mode;
+    logic step_pulse;
+    logic start_proc_pulse;
+    logic busy;
+    logic done;
 
     // ---- Instancia Virtual JTAG ----
     vJtag vjtag_inst (
@@ -35,24 +43,32 @@ module top (
         .virtual_state_uir(v_uir)
     );
 
-    // ---- Instancia connect ----
+    // ---- Instancia connect (JTAG front-end que conecta al MMIO y step unit) ----
     connect jtag_unit (
         .tck(tck),
         .tdi(tdi),
         .aclr(reset_n),
-
         .ir_in(ir_in),
         .v_sdr(v_sdr),
         .v_udr(v_udr),
         .v_cdr(v_cdr),
         .v_uir(v_uir),
-
         .tdo(tdo),
 
+        // Mem interface
         .mem_we(mem_we),
         .mem_addr(mem_addr),
         .mem_data_in(mem_data_in),
-        .mem_data_out(mem_data_out)
+        .mem_data_out(mem_data_out),
+
+        // STEP outputs
+        .step_mode(step_mode),
+        .step_pulse(step_pulse),
+
+        // Observabilidad
+        .start_proc_pulse(start_proc_pulse),
+        .busy(busy),
+        .done(done)
     );
 
     // ---- Memoria simple ----
@@ -63,5 +79,8 @@ module top (
         .data_in(mem_data_in),
         .data_out(mem_data_out)
     );
+
+    // (Opcional) conectar start_proc_pulse a un LED o pin de debug temporalmente
+    // wire debug_led = start_proc_pulse;
 
 endmodule

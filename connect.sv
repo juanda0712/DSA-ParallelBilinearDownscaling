@@ -2,123 +2,153 @@ module connect(
     input  logic        tck,
     input  logic        tdi,
     input  logic        aclr,
-    input  logic [1:0]  ir_in,
+    input  logic [2:0]  ir_in,
     input  logic        v_sdr,
     input  logic        v_udr,
     input  logic        v_cdr,
     input  logic        v_uir,
-
     output logic        tdo,
 
-    // Mem interface
     output logic        mem_we,
     output logic [7:0]  mem_addr,
     output logic [7:0]  mem_data_in,
-    input  logic [7:0]  mem_data_out
+    input  logic [7:0]  mem_data_out,
+
+    // Outputs to datapath
+    output logic        step_mode,
+    output logic        step_pulse,
+    output logic        start_proc_pulse,
+    output logic        busy,
+    output logic        done
 );
 
-    // -------------------------------
-    //  INSTRUCCIONES JTAG
-    // -------------------------------
-    typedef enum logic [1:0] {
-        BYPASS = 2'b00,
-        IR     = 2'b01,
-        MEM    = 2'b11
-    } jtag_instr_e;
+    typedef enum logic [2:0] { BYPASS=3'b000, IR=3'b001, MEM=3'b011 } jtag_instr_e;
+    jtag_instr_e instr;
+    assign instr = jtag_instr_e'(ir_in);
 
-    jtag_instr_e current_instr;
-    assign current_instr = jtag_instr_e'(ir_in);
+    //--------------------------------
+    // REGFILE 0xF0 – 0xFF
+    //--------------------------------
+    logic [7:0] regfile [0:15];
+    integer i;
 
-    // -------------------------------
-    //  DR REGISTERS
-    // -------------------------------
-    logic [1:0]  DR0;         // BYPASS
-    logic [15:0] DR_MEM;      // [15:8] addr, [7:0] data
-    logic [15:0] DR_IR;       // [15:12] unused, [11:8] index, [7:0] value
+    // DR registers
+    logic [2:0]  DR0;
+    logic [15:0] DR_MEM;
+    logic [15:0] DR_IR;
 
-    // -------------------------------
-    //  MEM signals
-    // -------------------------------
+    //--------------------------------
+    // Memory interface
+    //--------------------------------
     assign mem_addr    = DR_MEM[15:8];
     assign mem_data_in = DR_MEM[7:0];
-    assign mem_we      = (current_instr == MEM) && v_udr;
 
-    // -------------------------------
-    //  REGFILE
-    // -------------------------------
-    logic [7:0] regfile [0:15];
-    integer ii;
+    assign mem_we = (instr==MEM && v_udr && DR_MEM[15:8] < 8'hF0);
 
-    // -------------------------------
-    //  TDO MUX
-    // -------------------------------
+    //--------------------------------
+    // TDO MUX
+    //--------------------------------
     always_comb begin
-        case (current_instr)
+        case(instr)
             BYPASS: tdo = DR0[0];
             MEM:    tdo = DR_MEM[0];
             IR:     tdo = DR_IR[0];
-            default: tdo = 1'b0;
+            default:tdo = 1'b0;
         endcase
     end
 
-    // -------------------------------
-    //  SHIFT & CAPTURE
-    // -------------------------------
+    //--------------------------------
+    // SHIFT + CAPTURE
+    //--------------------------------
     always_ff @(posedge tck or negedge aclr) begin
-        if (!aclr) begin
-            DR0    <= '0;
-            DR_MEM <= 16'h0000;
-            DR_IR  <= 16'h0000;
-        end
-        else begin
-            case (current_instr)
+        if(!aclr) begin
+            DR0     <= 0;
+            DR_MEM  <= 0;
+            DR_IR   <= 0;
+        end else begin
 
-                // ---------------- BYPASS ----------------
-                BYPASS: begin
-                    if (v_sdr)
-                        DR0 <= {tdi, DR0[1]};
-                end
+            case(instr)
 
-                // ---------------- MEM ----------------
+                BYPASS:
+                    if(v_sdr) DR0 <= {tdi, DR0[2:1]};
+
                 MEM: begin
-                    if (v_sdr)
+                    if(v_sdr)
                         DR_MEM <= {tdi, DR_MEM[15:1]};
-                    else if (v_cdr)
-                        DR_MEM <= {DR_MEM[15:8], mem_data_out};
+                    else if(v_cdr) begin
+                        if(DR_MEM[15:8] >= 8'hF0)
+                            DR_MEM <= {DR_MEM[15:8], regfile[DR_MEM[15:8]-8'hF0]};
+                        else
+                            DR_MEM <= {DR_MEM[15:8], mem_data_out};
+                    end
                 end
 
-                // ---------------- IR (REGISTROS) ----------------
                 IR: begin
-                    if (v_sdr)
+                    if(v_sdr)
                         DR_IR <= {tdi, DR_IR[15:1]};
-                    else if (v_cdr)
-                        DR_IR <= {DR_IR[15:8], regfile[DR_IR[11:8]]};
+                    else if(v_cdr)
+                        DR_IR <= {DR_IR[15:8], regfile[0]};
                 end
 
             endcase
+
         end
     end
 
-    // -------------------------------
-    //  UPDATE (solo acciones)
-    // -------------------------------
+    //--------------------------------
+    // UPDATE
+    //--------------------------------
     always_ff @(posedge v_udr or negedge aclr) begin
-        if (!aclr) begin
-            for (ii = 0; ii < 16; ii++)
-                regfile[ii] <= 8'h00;
-        end
-        else begin
-            case (current_instr)
+        if(!aclr) begin
+            for(i=0;i<16;i++) regfile[i] <= 0;
+        end else begin
 
-                // WRITE REG
-                IR: begin
-                    regfile[DR_IR[11:8]] <= DR_IR[7:0];
-                end
+            // MEM write → MMIO
+            if(instr==MEM && DR_MEM[15:8] >= 8'hF0)
+                regfile[DR_MEM[15:8]-8'hF0] <= DR_MEM[7:0];
 
-                // WRITE MEM: ya lo hace mem_we
+            // IR write
+            if(instr==IR)
+                case(DR_IR[11:8])
+                    8'hF9: regfile[9] <= DR_IR[7:0]; // step ctrl
+                    8'hFA: regfile[10] <= DR_IR[7:0]; // counter
+                    8'hF7: regfile[7] <= DR_IR[7:0]; // busy/done
+                    default:
+                        if(DR_IR[11:8] < 8'h10)
+                            regfile[DR_IR[11:8]] <= DR_IR[7:0];
+                endcase
 
-            endcase
         end
     end
+
+    //--------------------------------
+    // INSTANTIACIÓN DE MÓDULOS
+    //--------------------------------
+
+    // START pulse: flanco 0→1 en F6
+    start_pulse_detector u_start(
+        .clk(tck),
+        .aclr(aclr),
+        .start_bit(regfile[6][0]),
+        .start_pulse(start_proc_pulse)
+    );
+
+    // STEPPING
+    step_unit u_step(
+        .clk(tck),
+        .aclr(aclr),
+        .reg_f9(regfile[9]),
+        .step_mode(step_mode),
+        .step_pulse(step_pulse)
+    );
+
+    // STATUS busy/done
+    status_unit u_status(
+        .clk(tck),
+        .aclr(aclr),
+        .reg_f7(regfile[7]),
+        .busy(busy),
+        .done(done)
+    );
 
 endmodule

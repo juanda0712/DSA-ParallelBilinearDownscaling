@@ -2,7 +2,7 @@
 # 
 preplace inst vJtag.virtual_jtag_0 -pg 1 -lvl 1 -y 30
 preplace inst vJtag -pg 1 -lvl 1 -y 40 -regy -20
+preplace netloc EXPORT<net_container>vJtag</net_container>(MASTER)virtual_jtag_0.tck,(MASTER)vJtag.tck) 1 1 1 N
 preplace netloc EXPORT<net_container>vJtag</net_container>(SLAVE)virtual_jtag_0.jtag,(SLAVE)vJtag.jtag) 1 0 1 N
-preplace netloc EXPORT<net_container>vJtag</net_container>(MASTER)vJtag.tck,(MASTER)virtual_jtag_0.tck) 1 1 1 N
 levelinfo -pg 1 0 40 240
 levelinfo -hier vJtag 50 90 190

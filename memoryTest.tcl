@@ -69,7 +69,7 @@ proc write_mem {addr8 data8} {
     puts "DR sent:  $dr"
     puts "DR resp:  $resp"
 
-    # IR = 1 --> BYPASS
+    # IR = 0 --> BYPASS
     device_virtual_ir_shift -instance_index 0 -ir_value 1 -no_captured_ir_value
     close_port
 }
@@ -130,7 +130,7 @@ proc write_reg {index data} {
     device_lock -timeout 10000
 
     # IR = 5 --> REG
-    device_virtual_ir_shift -instance_index 0 -ir_value 5 -no_captured_ir_value
+    device_virtual_ir_shift -instance_index 0 -ir_value 1 -no_captured_ir_value
     set resp [device_virtual_dr_shift -dr_value $dr -instance_index 0 -length 16]
 
     puts "DR sent: $dr"
@@ -155,7 +155,7 @@ proc read_reg {index} {
     open_port
     device_lock -timeout 10000
 
-    device_virtual_ir_shift -instance_index 0 -ir_value 5 -no_captured_ir_value
+    device_virtual_ir_shift -instance_index 0 -ir_value 1 -no_captured_ir_value
     set resp [device_virtual_dr_shift -dr_value $dr -instance_index 0 -length 16]
 
     device_virtual_ir_shift -instance_index 0 -ir_value 1 -no_captured_ir_value
