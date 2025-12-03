@@ -10,7 +10,7 @@ module connect(
     output logic        tdo,
 
     output logic        mem_we,
-    output logic [7:0]  mem_addr,
+    output logic [7:0]  mem_addr,   // Nota: Limitado a 8 bits por tu diseño original
     output logic [7:0]  mem_data_in,
     input  logic [7:0]  mem_data_out,
 
@@ -19,9 +19,14 @@ module connect(
     output logic        step_pulse,
     output logic        start_proc_pulse,
     output logic        busy,
-    output logic        done
-);
+    output logic        done,
 
+    // NUEVAS SALIDAS PARA CONFIGURACIÓN (Extraídas del regfile)
+    output logic [15:0] cfg_width,
+    output logic [15:0] cfg_height,
+    output logic [15:0] cfg_scale,
+    output logic [7:0]  cfg_mode
+);
     typedef enum logic [2:0] { BYPASS=3'b000, IR=3'b001, MEM=3'b011 } jtag_instr_e;
     jtag_instr_e instr;
     assign instr = jtag_instr_e'(ir_in);
@@ -42,7 +47,6 @@ module connect(
     //--------------------------------
     assign mem_addr    = DR_MEM[15:8];
     assign mem_data_in = DR_MEM[7:0];
-
     assign mem_we = (instr==MEM && v_udr && DR_MEM[15:8] < 8'hF0);
 
     //--------------------------------
@@ -66,15 +70,10 @@ module connect(
             DR_MEM  <= 0;
             DR_IR   <= 0;
         end else begin
-
             case(instr)
-
-                BYPASS:
-                    if(v_sdr) DR0 <= {tdi, DR0[2:1]};
-
+                BYPASS: if(v_sdr) DR0 <= {tdi, DR0[2:1]};
                 MEM: begin
-                    if(v_sdr)
-                        DR_MEM <= {tdi, DR_MEM[15:1]};
+                    if(v_sdr) DR_MEM <= {tdi, DR_MEM[15:1]};
                     else if(v_cdr) begin
                         if(DR_MEM[15:8] >= 8'hF0)
                             DR_MEM <= {DR_MEM[15:8], regfile[DR_MEM[15:8]-8'hF0]};
@@ -82,16 +81,11 @@ module connect(
                             DR_MEM <= {DR_MEM[15:8], mem_data_out};
                     end
                 end
-
                 IR: begin
-                    if(v_sdr)
-                        DR_IR <= {tdi, DR_IR[15:1]};
-                    else if(v_cdr)
-                        DR_IR <= {DR_IR[15:8], regfile[0]};
+                    if(v_sdr) DR_IR <= {tdi, DR_IR[15:1]};
+                    else if(v_cdr) DR_IR <= {DR_IR[15:8], regfile[0]};
                 end
-
             endcase
-
         end
     end
 
@@ -102,11 +96,10 @@ module connect(
         if(!aclr) begin
             for(i=0;i<16;i++) regfile[i] <= 0;
         end else begin
-
-            // MEM write → MMIO
+            // MEM write -> MMIO
             if(instr==MEM && DR_MEM[15:8] >= 8'hF0)
                 regfile[DR_MEM[15:8]-8'hF0] <= DR_MEM[7:0];
-
+            
             // IR write
             if(instr==IR)
                 case(DR_IR[11:8])
@@ -117,15 +110,12 @@ module connect(
                         if(DR_IR[11:8] < 8'h10)
                             regfile[DR_IR[11:8]] <= DR_IR[7:0];
                 endcase
-
         end
     end
 
     //--------------------------------
-    // INSTANTIACIÓN DE MÓDULOS
+    // INSTANTIACIÓN DE MÓDULOS INTERNOS
     //--------------------------------
-
-    // START pulse: flanco 0→1 en F6
     start_pulse_detector u_start(
         .clk(tck),
         .aclr(aclr),
@@ -133,7 +123,6 @@ module connect(
         .start_pulse(start_proc_pulse)
     );
 
-    // STEPPING
     step_unit u_step(
         .clk(tck),
         .aclr(aclr),
@@ -142,7 +131,6 @@ module connect(
         .step_pulse(step_pulse)
     );
 
-    // STATUS busy/done
     status_unit u_status(
         .clk(tck),
         .aclr(aclr),
@@ -150,5 +138,14 @@ module connect(
         .busy(busy),
         .done(done)
     );
+
+    //--------------------------------
+    // NUEVAS ASIGNACIONES DE SALIDA (Mapeo a registros F0-FF)
+    //--------------------------------
+    // Asumiendo mapa: F0(L)-F1(H) Width, F2(L)-F3(H) Height, F4(L)-F5(H) Scale, F6 Mode
+    assign cfg_width  = {regfile[1], regfile[0]}; 
+    assign cfg_height = {regfile[3], regfile[2]};
+    assign cfg_scale  = {regfile[5], regfile[4]};
+    assign cfg_mode   = regfile[6];
 
 endmodule
