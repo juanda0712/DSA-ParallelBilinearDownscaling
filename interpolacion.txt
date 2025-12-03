@@ -1,0 +1,634 @@
+// formato_pkg.sv
+package formato_pkg;
+
+  // Formato Q8.8 (16 bits: 8 enteros, 8 fraccionales)
+  typedef logic signed [15:0] q8_8_t;
+
+  // Convertir un píxel de 8 bits (0–255) a Q8.8
+  function automatic q8_8_t to_q8_8(input logic [7:0] pix);
+    to_q8_8 = {pix, 8'b0};   // << 8
+  endfunction
+
+  // Multiplicación Q8.8 x Q8.8 -> Q8.8
+  function automatic q8_8_t q8_8_mul(input q8_8_t a, input q8_8_t b);
+    logic signed [31:0] prod;
+    prod     = a * b;      // Q16.16
+    q8_8_mul = prod >>> 8; // bajar a Q8.8
+  endfunction
+
+  // Conversión Q8.8 -> píxel 8 bits, con redondeo y saturación [0,255]
+  function automatic logic [7:0] from_q8_8_sat(input q8_8_t x);
+    logic signed [15:0] tmp;
+    // Redondear: sumar 0.5 (0x0080) antes de truncar
+    tmp = x + 16'sh0080;
+
+    if (tmp < 0)
+      from_q8_8_sat = 8'd0;
+    else if (tmp[15:8] > 8'd255)
+      from_q8_8_sat = 8'd255;
+    else
+      from_q8_8_sat = tmp[15:8];  // tomar parte entera
+  endfunction
+
+  // Interpolación lineal 1D: lerp(a,b,t) = a + t*(b-a)
+  function automatic q8_8_t lerp(
+    input q8_8_t a,
+    input q8_8_t b,
+    input q8_8_t t
+  );
+    q8_8_t diff;
+    diff = b - a;
+    lerp = a + q8_8_mul(diff, t);
+  endfunction
+
+endpackage
+
+// interpolacion.sv
+`timescale 1ns/1ps
+
+import formato_pkg::*;
+
+module interpolacion
+(
+  // Píxeles vecinos (8 bits, gris)
+  input  logic [7:0] p00, // (x,   y)
+  input  logic [7:0] p10, // (x+1, y)
+  input  logic [7:0] p01, // (x,   y+1)
+  input  logic [7:0] p11, // (x+1, y+1)
+
+  // Coordenadas fraccionarias en Q8.8
+  input  q8_8_t fx,       // fracción horizontal
+  input  q8_8_t fy,       // fracción vertical
+
+  // Resultado
+  output logic [7:0] pixel_out,  // píxel interpolado (0–255)
+  output q8_8_t      pixel_out_q // mismo valor en Q8.8 
+);
+
+  // Representación interna Q8.8 de los píxeles
+  q8_8_t p00_q, p10_q, p01_q, p11_q;
+  q8_8_t i0, i1;
+  q8_8_t out_q;
+
+  always_comb begin
+    // Pasar de 8 bits a Q8.8
+    p00_q = to_q8_8(p00);
+    p10_q = to_q8_8(p10);
+    p01_q = to_q8_8(p01);
+    p11_q = to_q8_8(p11);
+
+    // Interpolación horizontal 
+    i0 = lerp(p00_q, p10_q, fx); // fila superior
+    i1 = lerp(p01_q, p11_q, fx); // fila inferior
+
+    // Interpolación vertical entre filas (usa fy)
+    out_q = lerp(i0, i1, fy);
+
+    pixel_out_q = out_q;
+    pixel_out   = from_q8_8_sat(out_q);
+  end
+
+endmodule
+
+// maquina_de_estados.sv
+`timescale 1ns/1ps
+
+module maquina_de_estados
+(
+  input  logic clk,
+  input  logic rst_n,
+
+  input  logic iniciar,     // pulso para comenzar una operación
+  input  logic modo_paso,   // 0 = libre, 1 = avanzar solo cuando paso=1
+  input  logic paso,        // pulso de "single step" en modo debug
+
+  output logic cargar,      // ciclo de carga de registros de entrada
+  output logic calcular,    // ciclo de cálculo / captura de salidas
+  output logic listo_oper,  // pulso de operación completada
+
+  output logic ocupado,     // 1 mientras la operación está en curso
+  output logic listo        // 1 cuando se puede aceptar un nuevo iniciar
+);
+
+  typedef enum logic [1:0] {
+    S_ESPERA,
+    S_CARGA,
+    S_CALCULO,
+    S_LISTO
+  } estado_t;
+
+  estado_t estado, siguiente;
+
+  logic avanzar;
+  assign avanzar = (modo_paso) ? paso : 1'b1;
+
+  // Registro de estado
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n)
+      estado <= S_ESPERA;
+    else if (avanzar)
+      estado <= siguiente;
+  end
+
+  // Lógica de transición y salidas
+  always_comb begin
+    siguiente   = estado;
+    cargar      = 1'b0;
+    calcular    = 1'b0;
+    listo_oper  = 1'b0;
+
+    case (estado)
+      S_ESPERA: begin
+        if (iniciar)
+          siguiente = S_CARGA;
+      end
+
+      S_CARGA: begin
+        cargar    = 1'b1;
+        siguiente = S_CALCULO;
+      end
+
+      S_CALCULO: begin
+        calcular  = 1'b1;
+        siguiente = S_LISTO;
+      end
+
+      S_LISTO: begin
+        listo_oper = 1'b1;
+        if (iniciar)
+          siguiente = S_CARGA; // encadenar otra operación
+        else
+          siguiente = S_ESPERA;
+      end
+
+      default: siguiente = S_ESPERA;
+    endcase
+  end
+
+  assign ocupado = (estado == S_CARGA) || (estado == S_CALCULO);
+  assign listo   = (estado == S_ESPERA) || (estado == S_LISTO);
+
+endmodule
+
+// modo_secuencial.sv
+`timescale 1ns/1ps
+import formato_pkg::*;
+
+module modo_secuencial
+(
+  input  logic clk,
+  input  logic rst_n,
+
+  // Control
+  input  logic iniciar,             // pulso: cargar un nuevo conjunto
+  output logic ocupado,             // 1 mientras se procesa este píxel
+  output logic listo,               // 1 cuando puede llegar un nuevo iniciar
+
+  // Entradas de un solo píxel
+  input  logic [7:0] p00_entrada,
+  input  logic [7:0] p10_entrada,
+  input  logic [7:0] p01_entrada,
+  input  logic [7:0] p11_entrada,
+  input  q8_8_t      fx_entrada,
+  input  q8_8_t      fy_entrada,
+
+  // Salidas
+  output logic [7:0] pixel_salida,
+  output q8_8_t      pixel_salida_q
+);
+
+  // Registros de entrada (simulan acceso/manejo de memoria)
+  logic [7:0] p00_r, p10_r, p01_r, p11_r;
+  q8_8_t      fx_r, fy_r;
+
+  logic valido_entrada;
+  logic [7:0] pixel_salida_c;
+  q8_8_t      pixel_salida_q_c;
+
+  // Captura de entradas cuando iniciar=1
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      p00_r <= '0;
+      p10_r <= '0;
+      p01_r <= '0;
+      p11_r <= '0;
+      fx_r  <= '0;
+      fy_r  <= '0;
+      valido_entrada <= 1'b0;
+    end
+    else begin
+      if (iniciar) begin
+        p00_r <= p00_entrada;
+        p10_r <= p10_entrada;
+        p01_r <= p01_entrada;
+        p11_r <= p11_entrada;
+        fx_r  <= fx_entrada;
+        fy_r  <= fy_entrada;
+        valido_entrada <= 1'b1;
+      end
+      else begin
+        valido_entrada <= 1'b0;
+      end
+    end
+  end
+
+  // Interpolador (el que ya tienes)
+  interpolacion u_interpolacion (
+    .p00(p00_r),
+    .p10(p10_r),
+    .p01(p01_r),
+    .p11(p11_r),
+    .fx (fx_r),
+    .fy (fy_r),
+    .pixel_out  (pixel_salida_c),
+    .pixel_out_q(pixel_salida_q_c)
+  );
+
+  // Registro de salida
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      pixel_salida   <= '0;
+      pixel_salida_q <= '0;
+    end
+    else if (valido_entrada) begin
+      pixel_salida   <= pixel_salida_c;
+      pixel_salida_q <= pixel_salida_q_c;
+    end
+  end
+
+  assign ocupado = valido_entrada;
+  assign listo   = ~ocupado;
+
+endmodule
+
+// modo_simd.sv
+`timescale 1ns/1ps
+import formato_pkg::*;
+
+module modo_simd #(
+  parameter int LANES = 4   // N píxeles/ciclo
+)(
+  input  logic clk,
+  input  logic rst_n,
+
+  // Control
+  input  logic iniciar,     // pulso para iniciar un lote de N píxeles
+  input  logic modo_paso,   // 0 = libre, 1 = stepping
+  input  logic paso,        // pulso de paso en modo debug
+  output logic ocupado,
+  output logic listo,
+
+  // Entradas: N conjuntos de vecinos + fracciones
+  input  logic [7:0] p00_entrada [LANES],
+  input  logic [7:0] p10_entrada [LANES],
+  input  logic [7:0] p01_entrada [LANES],
+  input  logic [7:0] p11_entrada [LANES],
+  input  q8_8_t      fx_entrada  [LANES],
+  input  q8_8_t      fy_entrada  [LANES],
+
+  // Salidas: N píxeles interpolados
+  output logic [7:0] pixel_salida   [LANES],
+  output q8_8_t      pixel_salida_q [LANES]
+);
+
+  // Señales de la máquina de estados
+  logic cargar, calcular, listo_oper;
+
+  // Registros SIMD de entrada
+  logic [7:0] p00 [LANES];
+  logic [7:0] p10 [LANES];
+  logic [7:0] p01 [LANES];
+  logic [7:0] p11 [LANES];
+  q8_8_t      fx  [LANES];
+  q8_8_t      fy  [LANES];
+
+  registros_simd #(.N(LANES)) u_registros (
+    .clk          (clk),
+    .rst_n        (rst_n),
+    .cargar       (cargar),
+    .p00_entrada  (p00_entrada),
+    .p10_entrada  (p10_entrada),
+    .p01_entrada  (p01_entrada),
+    .p11_entrada  (p11_entrada),
+    .fx_entrada   (fx_entrada),
+    .fy_entrada   (fy_entrada),
+    .p00          (p00),
+    .p10          (p10),
+    .p01          (p01),
+    .p11          (p11),
+    .fx           (fx),
+    .fy           (fy)
+  );
+
+  // Interpoladores en paralelo
+  logic [7:0] pixel_salida_c   [LANES];
+  q8_8_t      pixel_salida_q_c [LANES];
+
+  genvar i;
+  generate
+    for (i = 0; i < LANES; i++) begin : GEN_LANES
+      interpolacion u_interpolacion (
+        .p00(p00[i]),
+        .p10(p10[i]),
+        .p01(p01[i]),
+        .p11(p11[i]),
+        .fx (fx[i]),
+        .fy (fy[i]),
+        .pixel_out  (pixel_salida_c[i]),
+        .pixel_out_q(pixel_salida_q_c[i])
+      );
+    end
+  endgenerate
+
+  // Registro de salidas cuando calcular=1
+  integer k;
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      for (k = 0; k < LANES; k++) begin
+        pixel_salida[k]   <= '0;
+        pixel_salida_q[k] <= '0;
+      end
+    end
+    else if (calcular) begin
+      for (k = 0; k < LANES; k++) begin
+        pixel_salida[k]   <= pixel_salida_c[k];
+        pixel_salida_q[k] <= pixel_salida_q_c[k];
+      end
+    end
+  end
+
+  // Máquina de estados de control
+  maquina_de_estados u_maquina (
+    .clk       (clk),
+    .rst_n     (rst_n),
+    .iniciar   (iniciar),
+    .modo_paso (modo_paso),
+    .paso      (paso),
+    .cargar    (cargar),
+    .calcular  (calcular),
+    .listo_oper(listo_oper),
+    .ocupado   (ocupado),
+    .listo     (listo)
+  );
+
+endmodule
+
+// registros_simd.sv
+`timescale 1ns/1ps
+import formato_pkg::*;
+
+module registros_simd #(
+  parameter int N = 4  // número de "lanes" SIMD
+)(
+  input  logic clk,
+  input  logic rst_n,
+  input  logic cargar,        // captura entradas cuando cargar=1
+
+  // Entradas
+  input  logic [7:0] p00_entrada [N],
+  input  logic [7:0] p10_entrada [N],
+  input  logic [7:0] p01_entrada [N],
+  input  logic [7:0] p11_entrada [N],
+  input  q8_8_t      fx_entrada  [N],
+  input  q8_8_t      fy_entrada  [N],
+
+  // Salidas registradas
+  output logic [7:0] p00 [N],
+  output logic [7:0] p10 [N],
+  output logic [7:0] p01 [N],
+  output logic [7:0] p11 [N],
+  output q8_8_t      fx  [N],
+  output q8_8_t      fy  [N]
+);
+
+  integer k;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      for (k = 0; k < N; k++) begin
+        p00[k] <= '0;
+        p10[k] <= '0;
+        p01[k] <= '0;
+        p11[k] <= '0;
+        fx[k]  <= '0;
+        fy[k]  <= '0;
+      end
+    end
+    else if (cargar) begin
+      for (k = 0; k < N; k++) begin
+        p00[k] <= p00_entrada[k];
+        p10[k] <= p10_entrada[k];
+        p01[k] <= p01_entrada[k];
+        p11[k] <= p11_entrada[k];
+        fx[k]  <= fx_entrada[k];
+        fy[k]  <= fy_entrada[k];
+      end
+    end
+  end
+
+endmodule
+
+
+
+
+tambien vi que cargo un testbench:
+// modos_tb.sv
+`timescale 1ns/1ps
+import formato_pkg::*;
+
+module modos_tb;
+
+  localparam int LANES_SIMD = 4;
+
+  // reloj y reset
+  logic clk, rst_n;
+
+  // Generación de reloj SIN forever
+  initial begin
+    clk = 1'b0;
+  end
+
+  always #5 clk = ~clk;   // periodo 10 ns
+
+  // Control secuencial
+  logic iniciar_seq;
+  logic ocupado_seq, listo_seq;
+
+  // Control SIMD
+  logic iniciar_simd;
+  logic modo_paso, paso;
+  logic ocupado_simd, listo_simd;
+
+  // Datos secuencial
+  logic [7:0] p00_seq, p10_seq, p01_seq, p11_seq;
+  q8_8_t      fx_seq, fy_seq;
+  logic [7:0] pixel_seq;
+  q8_8_t      pixel_seq_q;
+
+  // Datos SIMD
+  logic [7:0] p00_simd [LANES_SIMD];
+  logic [7:0] p10_simd [LANES_SIMD];
+  logic [7:0] p01_simd [LANES_SIMD];
+  logic [7:0] p11_simd [LANES_SIMD];
+  q8_8_t      fx_simd  [LANES_SIMD];
+  q8_8_t      fy_simd  [LANES_SIMD];
+  logic [7:0] pixel_simd   [LANES_SIMD];
+  q8_8_t      pixel_simd_q [LANES_SIMD];
+
+  // Contadores de ciclos (para no usar while)
+  int ciclos_simd;
+  int ciclos_seq;
+  logic contar_simd;
+  logic contar_seq;
+
+  // Contador de ciclos SIMD
+  // *** OJO: ahora es always, no always_ff ***
+  always @(negedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      ciclos_simd <= 0;
+    end else if (contar_simd) begin
+      ciclos_simd <= ciclos_simd + 1;
+    end
+  end
+
+  // Contador de ciclos secuencial
+  // *** OJO: ahora es always, no always_ff ***
+  always @(negedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      ciclos_seq <= 0;
+    end else if (contar_seq) begin
+      ciclos_seq <= ciclos_seq + 1;
+    end
+  end
+
+  // Instancias
+  modo_secuencial u_modo_secuencial (
+    .clk            (clk),
+    .rst_n          (rst_n),
+    .iniciar        (iniciar_seq),
+    .ocupado        (ocupado_seq),
+    .listo          (listo_seq),
+    .p00_entrada    (p00_seq),
+    .p10_entrada    (p10_seq),
+    .p01_entrada    (p01_seq),
+    .p11_entrada    (p11_seq),
+    .fx_entrada     (fx_seq),
+    .fy_entrada     (fy_seq),
+    .pixel_salida   (pixel_seq),
+    .pixel_salida_q (pixel_seq_q)
+  );
+
+  modo_simd #(.LANES(LANES_SIMD)) u_modo_simd (
+    .clk            (clk),
+    .rst_n          (rst_n),
+    .iniciar        (iniciar_simd),
+    .modo_paso      (modo_paso),
+    .paso           (paso),
+    .ocupado        (ocupado_simd),
+    .listo          (listo_simd),
+    .p00_entrada    (p00_simd),
+    .p10_entrada    (p10_simd),
+    .p01_entrada    (p01_simd),
+    .p11_entrada    (p11_simd),
+    .fx_entrada     (fx_simd),
+    .fy_entrada     (fy_simd),
+    .pixel_salida   (pixel_simd),
+    .pixel_salida_q (pixel_simd_q)
+  );
+
+  int i;
+
+  initial begin
+    // init
+    rst_n         = 0;
+    iniciar_seq   = 0;
+    iniciar_simd  = 0;
+    modo_paso     = 1'b0;
+    paso          = 1'b0;
+    contar_simd   = 1'b0;
+    contar_seq    = 1'b0;
+    ciclos_simd   = 0;
+    ciclos_seq    = 0;
+
+    // Reset
+    repeat (3) @(negedge clk);
+    rst_n = 1;
+    @(negedge clk);
+
+    // ---- Definir 4 posiciones de ejemplo ----
+    // Lane 0
+    p00_simd[0] = 8'd10;  p10_simd[0] = 8'd20;
+    p01_simd[0] = 8'd30;  p11_simd[0] = 8'd40;
+    fx_simd[0]  = 16'sh0080; // 0.5
+    fy_simd[0]  = 16'sh0080; // 0.5
+
+    // Lane 1
+    p00_simd[1] = 8'd50;  p10_simd[1] = 8'd60;
+    p01_simd[1] = 8'd70;  p11_simd[1] = 8'd80;
+    fx_simd[1]  = 16'sh0040; // 0.25
+    fy_simd[1]  = 16'sh00C0; // 0.75
+
+    // Lane 2
+    p00_simd[2] = 8'd0;   p10_simd[2] = 8'd100;
+    p01_simd[2] = 8'd0;   p11_simd[2] = 8'd100;
+    fx_simd[2]  = 16'sh0080;
+    fy_simd[2]  = 16'sh0080;
+
+    // Lane 3
+    p00_simd[3] = 8'd200; p10_simd[3] = 8'd220;
+    p01_simd[3] = 8'd210; p11_simd[3] = 8'd230;
+    fx_simd[3]  = 16'sh00A0;
+    fy_simd[3]  = 16'sh0020;
+
+    // ===== MODO SIMD =====
+    @(negedge clk);
+    ciclos_simd  = 0;
+    contar_simd  = 1'b1;
+    iniciar_simd = 1'b1;
+    @(negedge clk);
+    iniciar_simd = 1'b0;
+
+    // Esperar a que termine SIN while, usando wait
+    wait (listo_simd);
+    contar_simd = 1'b0;
+
+    $display("---- RESULTADOS MODO SIMD ----");
+    $display("Ciclos totales = %0d", ciclos_simd);
+    for (i = 0; i < LANES_SIMD; i++) begin
+      $display("Lane %0d: pixel=%0d  pixel_q=0x%h",
+               i, pixel_simd[i], pixel_simd_q[i]);
+    end
+
+    // ===== MODO SECUENCIAL =====
+    ciclos_seq = 0;
+
+    for (int pix = 0; pix < LANES_SIMD; pix++) begin
+      p00_seq = p00_simd[pix];
+      p10_seq = p10_simd[pix];
+      p01_seq = p01_simd[pix];
+      p11_seq = p11_simd[pix];
+      fx_seq  = fx_simd[pix];
+      fy_seq  = fy_simd[pix];
+
+      @(negedge clk);
+      iniciar_seq = 1'b1;
+      @(negedge clk);
+      iniciar_seq = 1'b0;
+
+      // Contar ciclos mientras el modo secuencial está ocupado
+      contar_seq = 1'b1;
+      wait (!ocupado_seq);
+      contar_seq = 1'b0;
+
+      $display("SEQ pixel %0d: pixel=%0d  pixel_q=0x%h",
+               pix, pixel_seq, pixel_seq_q);
+    end
+
+    $display("---- COMPARACIÓN ----");
+    $display("Secuencial: %0d ciclos para %0d píxeles", ciclos_seq, LANES_SIMD);
+    $display("SIMD      : %0d ciclos para %0d píxeles", ciclos_simd, LANES_SIMD);
+
+    $finish;
+  end
+
+endmodule
