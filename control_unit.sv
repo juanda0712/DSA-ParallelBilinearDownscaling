@@ -1,5 +1,3 @@
-// control_unit.sv (VERSIÓN FINAL CON CORRECCIÓN DE PROTOCOLO DE CONTADORES)
-// Corrige bug de direccionamiento SIMD y Timeout
 `timescale 1ns/1ps
 import formato_pkg::*;
 module control_unit (
@@ -7,7 +5,7 @@ module control_unit (
     input  logic        aclr_n,
     
     // Control
-    input  logic        start_proc_pulse, // NIVEL DESDE CONNECT
+    input  logic        start_proc_pulse, 
     input  logic        step_mode,
     input  logic        step_pulse,
     
@@ -21,40 +19,35 @@ module control_unit (
     output logic        busy,
     output logic        done,
     
-    // Memoria
+    // MODIFICADO: Memoria de 19 bits
     output logic        mem_we,
-    output logic [15:0] mem_addr,     
+    output logic [18:0] mem_addr,      
     output logic [7:0]  mem_data_out,
     input  logic [7:0]  mem_data_in
 );
-// Estados
+// Estados (sin cambios en definición enum)
     typedef enum logic [4:0] {
         IDLE, INIT, CALC_ADDR,
-        // Secuencial con latencia de 1 ciclo
         REQ_P00, WAIT_P00, REQ_P10, WAIT_P10, REQ_P01, WAIT_P01_A, REQ_P11, WAIT_P11,
         COMPUTE_SEQ, WRITE_SEQ, 
-        // SIMD
         SIMD_FETCH_INIT, SIMD_FETCH_REQ, SIMD_FETCH_WAIT, SIMD_STORE_VEC,
         COMPUTE_SIMD, WAIT_SIMD, WRITE_SIMD_LOOP,
-        // Común
         NEXT_PIXEL, DONE_STATE, 
-        // ESTADOS PARA ESCRITURA DE CONTADORES
         WRITE_FLOP_L, WRITE_FLOP_H, WRITE_READ_L, WRITE_READ_H, WRITE_WRITE_L, WRITE_WRITE_H,
         DONE_STATE_FINAL
     } state_t;
     state_t state;
     
-    // --- Performance Counters (16-bit) ---
+    // Performance Counters
     logic [15:0] flops_cnt;
     logic [15:0] reads_cnt;
     logic [15:0] writes_cnt;
     
-    // --- LÓGICA DE SINCRONIZACIÓN Y GENERACIÓN DE PULSO DE INICIO ---
+    // Sincronización (sin cambios)
     logic start_sync_level; 
     logic start_sync_prev;  
     logic start_proc_pulse_synced; 
-
-    always_ff @(posedge clk or negedge aclr_n) begin // clk es CLOCK_50
+    always_ff @(posedge clk or negedge aclr_n) begin 
         if (!aclr_n) begin
             start_sync_level <= 0;
             start_sync_prev  <= 0;
@@ -64,23 +57,18 @@ module control_unit (
         end
     end
     assign start_proc_pulse_synced = start_sync_level & (~start_sync_prev); 
-    // ----------------------------------------------------------------------
     
-    // Contadores de Destino
+    // Lógica interna (sin cambios)
     logic [15:0] dst_x, dst_y;
-    // Acumuladores de Coordenada Fuente (Q16.16)
     logic [31:0] src_acc_x, src_acc_y;
-    // Coordenada Fuente Temporal (para cálculos SIMD iterativos)
     logic [31:0] temp_src_acc_x;
-    // Coordenadas enteras/frac
     logic [15:0] src_x_int, src_y_int;
     q8_8_t       fx, fy;
     logic [31:0] step_val;
 
-    // --- SECUENCIAL ---
+    // SECUENCIAL / SIMD variables (sin cambios)
     logic [7:0] p00_reg, p10_reg, p01_reg, p11_reg;
     logic [7:0] pix_res_seq;
-    // --- SIMD (N=4) ---
     localparam LANES = 4;
     logic [7:0] p00_vec[LANES], p10_vec[LANES], p01_vec[LANES], p11_vec[LANES];
     q8_8_t      fx_vec[LANES],  fy_vec[LANES];
@@ -88,13 +76,11 @@ module control_unit (
     q8_8_t      pix_res_q_vec[LANES];
     logic       simd_start, simd_busy, simd_ready;
     logic [2:0] lane_idx;
-    // 0..3
     logic [2:0] fetch_step; 
 
-    // Paso: 1.0 / Scale.
     assign step_val = (cfg_scale == 16'h0080) ? 32'h00020000 : 32'h00010000;
     
-    // Instancias
+    // Instancias (sin cambios en argumentos, interpolacion y modo_simd son internos)
     interpolacion u_core_seq (
         .p00(p00_reg), .p10(p10_reg), .p01(p01_reg), .p11(p11_reg),
         .fx(fx), .fy(fy), .pixel_out(pix_res_seq), .pixel_out_q()
@@ -118,7 +104,6 @@ module control_unit (
             mem_we <= 0; mem_addr <= 0; mem_data_out <= 0;
             simd_start <= 0; lane_idx <= 0; fetch_step <= 0;
             temp_src_acc_x <= 0;
-            // RESET COUNTERS
             flops_cnt <= 0; reads_cnt <= 0; writes_cnt <= 0;
         end else begin
             if (!step_mode || (step_mode && step_pulse)) begin
@@ -129,7 +114,6 @@ module control_unit (
                         if (start_proc_pulse_synced || (step_mode && step_pulse)) begin 
                             state <= INIT; 
                             busy <= 1;
-                            // Reset Counters en inicio (en caso de que no haya habido reset)
                             flops_cnt <= 0; reads_cnt <= 0; writes_cnt <= 0;
                         end 
                         else busy <= 0;
@@ -160,7 +144,7 @@ module control_unit (
                         end
                     end
 
-                    // --- SECUENCIAL CON LATENCIA (4 lecturas = 8 ciclos) ---
+                    // --- SECUENCIAL ---
                     REQ_P00: begin mem_we<=0;
                         mem_addr <= (src_y_int*cfg_width)+src_x_int; reads_cnt <= reads_cnt + 1; state <= WAIT_P00; end
                     WAIT_P00: begin p00_reg <= mem_data_in; state <= REQ_P10; end 
@@ -178,16 +162,17 @@ module control_unit (
                     WAIT_P11: begin p11_reg <= mem_data_in; state <= COMPUTE_SEQ; end 
                         
                     COMPUTE_SEQ: begin 
-                        flops_cnt <= flops_cnt + 1; // 1 FLOP por píxel de salida
+                        flops_cnt <= flops_cnt + 1; 
                         state <= WRITE_SEQ; 
                     end
                         
                     WRITE_SEQ: begin
-                        // CORRECCIÓN: Usar el ancho de salida (cfg_width / 2) como stride
-                        mem_addr <= 16'h4000 + (dst_y * (cfg_width / 2)) + dst_x; 
+                        // MODIFICADO: OFFSET DE SALIDA = 0x40000 (256KB)
+                        // Para evitar sobreescribir la imagen de entrada de 512x512
+                        mem_addr <= 19'h40000 + (dst_y * (cfg_width / 2)) + dst_x; 
                         mem_data_out <= pix_res_seq;
                         mem_we <= 1;
-                        writes_cnt <= writes_cnt + 1; // 1 Escritura
+                        writes_cnt <= writes_cnt + 1;
                         state <= NEXT_PIXEL;
                     end
 
@@ -205,7 +190,6 @@ module control_unit (
 
                     SIMD_FETCH_REQ: begin
                         mem_we <= 0;
-                        // 4 Lecturas por lane (total 16 lecturas si LANES=4)
                         case(fetch_step)
                             0: begin mem_addr<=(src_y_int*cfg_width)+src_x_int; reads_cnt <= reads_cnt + 1; fetch_step<=1; end 
                             1: begin mem_addr<=(src_y_int*cfg_width)+src_x_int+1; reads_cnt <= reads_cnt + 1; fetch_step<=2; end
@@ -238,18 +222,18 @@ module control_unit (
                     WAIT_SIMD: begin
                         simd_start <= 0;
                         if (simd_ready && !simd_start) begin
-                            flops_cnt <= flops_cnt + LANES; // N FLOPs por bloque SIMD
+                            flops_cnt <= flops_cnt + LANES;
                             lane_idx <= 0;
                             state <= WRITE_SIMD_LOOP;
                         end
                     end
 
                     WRITE_SIMD_LOOP: begin
-                        // CORRECCIÓN: Usar el ancho de salida (cfg_width / 2) como stride
-                        mem_addr <= 16'h4000 + (dst_y * (cfg_width / 2)) + (dst_x + lane_idx);
+                        // MODIFICADO: OFFSET DE SALIDA = 0x40000 (256KB)
+                        mem_addr <= 19'h40000 + (dst_y * (cfg_width / 2)) + (dst_x + lane_idx);
                         mem_data_out <= pix_res_vec[lane_idx];
                         mem_we <= 1;
-                        writes_cnt <= writes_cnt + 1; // 1 Escritura
+                        writes_cnt <= writes_cnt + 1; 
                         
                         if (lane_idx == LANES-1) begin
                             state <= NEXT_PIXEL;
@@ -282,35 +266,33 @@ module control_unit (
                     end
 
                     DONE_STATE: begin
-                        // Inicia la escritura de contadores en MMIO (0xF8 a 0xFD)
                         state <= WRITE_FLOP_L;
-                        // BUSY se mantiene ALTO para que la CU tenga el bus
                     end
                     
-                    // --- ESCRITURA DE REGISTROS MMIO (0xFFF0 + 8 = 0xFFF8) ---
-                    // Flops: F9:F8 | Reads: FB:FA | Writes: FD:FC
-                    WRITE_FLOP_L: begin // Escribe F8 (Flops L)
-                        mem_we <= 1; mem_addr <= 16'hFFF8; mem_data_out <= flops_cnt[7:0]; state <= WRITE_FLOP_H;
+                    // --- ESCRITURA DE REGISTROS MMIO ---
+                    // MODIFICADO: Direcciones movidas a 0x58000 para estar dentro del MEM_DEPTH
+                    WRITE_FLOP_L: begin 
+                        mem_we <= 1; mem_addr <= 19'h58000; mem_data_out <= flops_cnt[7:0]; state <= WRITE_FLOP_H;
                     end
-                    WRITE_FLOP_H: begin // Escribe F9 (Flops H)
-                        mem_we <= 1; mem_addr <= 16'hFFF9; mem_data_out <= flops_cnt[15:8]; state <= WRITE_READ_L;
+                    WRITE_FLOP_H: begin 
+                        mem_we <= 1; mem_addr <= 19'h58001; mem_data_out <= flops_cnt[15:8]; state <= WRITE_READ_L;
                     end
-                    WRITE_READ_L: begin // Escribe FA (Reads L)
-                        mem_we <= 1; mem_addr <= 16'hFFFA; mem_data_out <= reads_cnt[7:0]; state <= WRITE_READ_H;
+                    WRITE_READ_L: begin 
+                        mem_we <= 1; mem_addr <= 19'h58002; mem_data_out <= reads_cnt[7:0]; state <= WRITE_READ_H;
                     end
-                    WRITE_READ_H: begin // Escribe FB (Reads H)
-                        mem_we <= 1; mem_addr <= 16'hFFFB; mem_data_out <= reads_cnt[15:8]; state <= WRITE_WRITE_L;
+                    WRITE_READ_H: begin 
+                        mem_we <= 1; mem_addr <= 19'h58003; mem_data_out <= reads_cnt[15:8]; state <= WRITE_WRITE_L;
                     end
-                    WRITE_WRITE_L: begin // Escribe FC (Writes L)
-                        mem_we <= 1; mem_addr <= 16'hFFFC; mem_data_out <= writes_cnt[7:0]; state <= WRITE_WRITE_H;
+                    WRITE_WRITE_L: begin 
+                        mem_we <= 1; mem_addr <= 19'h58004; mem_data_out <= writes_cnt[7:0]; state <= WRITE_WRITE_H;
                     end
-                    WRITE_WRITE_H: begin // Escribe FD (Writes H)
-                        mem_we <= 1; mem_addr <= 16'hFFFD; mem_data_out <= writes_cnt[15:8]; state <= DONE_STATE_FINAL;
+                    WRITE_WRITE_H: begin 
+                        mem_we <= 1; mem_addr <= 19'h58005; mem_data_out <= writes_cnt[15:8]; state <= DONE_STATE_FINAL;
                     end
                     
                     DONE_STATE_FINAL: begin
                         mem_we <= 0;
-                        busy <= 0; // BAJAR BUSY AQUÍ
+                        busy <= 0; 
                         done <= 1;
                         if (!start_proc_pulse) state <= IDLE;
                     end
@@ -329,7 +311,7 @@ module control_unit (
             src_acc_y <= src_acc_y + step_val;
             state <= CALC_ADDR;
         end else begin
-            state <= DONE_STATE; // Inicia la escritura de contadores
+            state <= DONE_STATE;
         end
     endtask
 

@@ -7,9 +7,9 @@ module top (
     logic [2:0] ir_in;
     logic v_cdr, v_sdr, v_udr, v_uir;
 
-    // Buses de Memoria (16 BITS)
+    // MODIFICADO: Buses de Memoria ahora son de 19 BITS (512KB espacio total)
     logic jtag_mem_we, ctrl_mem_we, final_mem_we;
-    logic [15:0] jtag_mem_addr, ctrl_mem_addr, final_mem_addr;
+    logic [18:0] jtag_mem_addr, ctrl_mem_addr, final_mem_addr; // [18:0]
     logic [7:0] jtag_mem_data_in, ctrl_mem_data_out, final_mem_data_in;
     logic [7:0] mem_data_out_ram;
 
@@ -47,7 +47,7 @@ module top (
         .cfg_width(cfg_width), .cfg_height(cfg_height), .cfg_scale(cfg_scale), .cfg_mode(cfg_mode)
     );
 
-    // Unidad de Control (CORREGIDO: Sin parametros)
+    // Unidad de Control
     control_unit cu_inst (
         .clk(CLOCK_50), .aclr_n(reset_n), .start_proc_pulse(start_proc_pulse),
         .step_mode(step_mode), .step_pulse(step_pulse), 
@@ -74,8 +74,11 @@ module top (
         end
     end
 
-    // Memoria SRAM
-    mem_sram_simple #(.ADDR_BITS(16)) RAM0 (
+    // MODIFICADO: Memoria SRAM instanciada con 19 bits
+    mem_sram_simple #(
+        .ADDR_BITS(19),
+        .MEM_DEPTH(380000) 
+    ) RAM0 (
         .clk(CLOCK_50), .we(final_mem_we), .addr(final_mem_addr), 
         .data_in(final_mem_data_in), .data_out(mem_data_out_ram)
     );

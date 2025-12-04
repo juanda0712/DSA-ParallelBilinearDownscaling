@@ -1,5 +1,5 @@
 # ==============================================================================
-# SCRIPT DE PRUEBA COMPLETA (SECUENCIAL vs SIMD)
+# SCRIPT DE PRUEBA COMPLETA (PROTOCOL ACTUALIZADO 19-BIT ADDRESSING)
 # ==============================================================================
 
 if {[catch {package require ::quartus::stp} err]} { puts "Error STP: $err" }
@@ -29,31 +29,35 @@ if { [catch {
 puts "--> Conexión OK.\n"
 
 # ------------------------------------------------------------------------------
-# 2. FUNCIONES DE 24 BITS (Protocolo Final)
+# 2. FUNCIONES DE 27 BITS (Protocolo 19-bit Address + 8-bit Data)
 # ------------------------------------------------------------------------------
 
-# Escribir Memoria (IR=3)
-proc write_mem {addr16 val8} {
-    set a [format "%016b" $addr16]
+# Escribir Memoria (IR=3) -> Ahora usa 27 bits
+proc write_mem {addr19 val8} {
+    set a [format "%019b" $addr19]
     set d [format "%08b" $val8]
     device_virtual_ir_shift -instance 0 -ir_value 3 -no_captured_ir_value
-    device_virtual_dr_shift -instance 0 -dr_value "${a}${d}" -length 24
+    # CAMBIO: Length 27
+    device_virtual_dr_shift -instance 0 -dr_value "${a}${d}" -length 27
     device_virtual_ir_shift -instance 0 -ir_value 1 -no_captured_ir_value
 }
 
-# Leer Memoria (IR=2)
-proc read_mem {addr16} {
-    set a [format "%016b" $addr16]
+# Leer Memoria (IR=2) -> Ahora usa 27 bits
+proc read_mem {addr19} {
+    set a [format "%019b" $addr19]
     # Set Address
     device_virtual_ir_shift -instance 0 -ir_value 2 -no_captured_ir_value
-    device_virtual_dr_shift -instance 0 -dr_value "${a}00000000" -length 24
-    # Read Data
-    set resp [device_virtual_dr_shift -instance 0 -dr_value "000000000000000000000000" -length 24]
+    # CAMBIO: Length 27
+    device_virtual_dr_shift -instance 0 -dr_value "${a}00000000" -length 27
+    # Read Data (shift 27 zeros out, read result)
+    set resp [device_virtual_dr_shift -instance 0 -dr_value "000000000000000000000000000" -length 27]
     device_virtual_ir_shift -instance 0 -ir_value 1 -no_captured_ir_value
-    return [string range $resp 16 23]
+    
+    # CAMBIO: El dato está en los últimos 8 bits del string de 27 (indices 19 a 26)
+    return [string range $resp 19 26]
 }
 
-# Escribir Registro (IR=1)
+# Escribir Registro (IR=1) -> ESTE NO CAMBIA (Sigue siendo 16 bits para Config)
 proc write_reg {idx val} {
     set i [format "%04b" $idx]
     set v [format "%08b" $val]
@@ -61,7 +65,7 @@ proc write_reg {idx val} {
     device_virtual_dr_shift -instance 0 -dr_value "0000${i}${v}" -length 16
 }
 
-# Leer Registro (Status, etc.)
+# Leer Registro (Status, etc.) -> ESTE NO CAMBIA
 proc read_reg {idx} {
     set i [format "%04b" $idx]
     device_virtual_ir_shift -instance 0 -ir_value 1 -no_captured_ir_value
@@ -76,11 +80,10 @@ proc read_status {} {
     device_virtual_ir_shift -instance 0 -ir_value 1 -no_captured_ir_value
     set st [device_virtual_dr_shift -instance 0 -dr_value "0000000000000000" -length 16]
     device_virtual_ir_shift -instance 0 -ir_value 1 -no_captured_ir_value
-    # Retorna el string de 16 bits capturado
     return $st
 }
 
-# Esperar Busy=0 (Aumentado a 1000 iteraciones/10 segundos)
+# Esperar Busy=0
 proc wait_busy_low {} {
     puts "   Esperando procesamiento..."
     for {set i 0} {$i < 1000} {incr i} { 
@@ -93,7 +96,7 @@ proc wait_busy_low {} {
     return 0
 }
 
-# Leer Contador de 16 bits (desde direcciones MMIO L/H)
+# Leer Contador de 16 bits
 proc read_counter {addr_l} {
     # Lee LSB (addr_l)
     set val_l_bin [read_mem $addr_l]
@@ -107,18 +110,6 @@ proc read_counter {addr_l} {
     return $val
 }
 
-####LEER CON 32 BITS
-proc read_mem32 {addr32} {
-    set val 0
-    for {set i 0} {$i < 4} {incr i} {
-        set b [read_mem [expr {$addr32 + $i}]]
-        scan $b %b bi
-        # bi es un entero 0-255
-        set val [expr {($val << 8) | $bi}]
-    }
-    return $val
-}
-
 # ------------------------------------------------------------------------------
 # 8. TEST DE STEPPING (Manejo de terminación rápida)
 # ------------------------------------------------------------------------------
@@ -126,7 +117,7 @@ proc test_stepping {} {
     puts "\n== 8. TEST DE STEPPING (Modo Secuencial, 1 paso) =="
     
     # 1. Asegurar MODO SECUENCIAL (Reg 6 = 0x00)
-    write_reg 6 0x00 ;# Asegurar Mode 0 (Secuencial)
+    write_reg 6 0x00 
     
     # 2. Configurar modo Stepping (reg 9, bit 1 = 1)
     write_reg 9 0x02 
@@ -150,37 +141,36 @@ proc test_stepping {} {
             set busy_high 1
             break
         }
-        # Si Done sube, el proceso fue demasiado rápido y terminó antes de Busy=1.
         if {$done_bit == "1"} {
             puts "   -> Aviso: Proceso terminado instantáneamente (Done=1). Stepping no pudo detener la FSM."
-            write_reg 9 0x00 ; # Desactiva Stepping
-            return 1 # Devuelve éxito al test para avanzar.
+            write_reg 9 0x00 
+            return 1 
         }
         after 1
     }
 
     if {$busy_high == 0} {
         puts "   ERROR: Busy nunca subió (Status: $st)."
-        write_reg 9 0x00 ;# Desactivar Stepping
+        write_reg 9 0x00 
         return 0
     }
     puts "   -> Busy Subió. Estado: $st."
 
-    # 5. Forzar la salida del estado de detención (Si la FSM se detuvo en un WAIT)
-    write_reg 9 0x03 ; # Pulso de paso de liberación
+    # 5. Forzar la salida del estado de detención
+    write_reg 9 0x03 
     puts "   -> Pulso final de liberación enviado."
     after 5 
     
     # 6. Desactivar Stepping y dejar correr para terminar
     write_reg 9 0x00
-    after 50 ; # Retardo para asegurar que la FSM vea el cambio de step_mode a 0
+    after 50 
     puts "   -> Modo Stepping Desactivado. Corriendo libre."
     
     if {[wait_busy_low]} {
-        puts "   -> Proceso terminado. Stepping funcional (al menos inicio)."
+        puts "   -> Proceso terminado. Stepping funcional."
         return 1
     } else {
-        puts "   -> ERROR: Stepping: Timeout en modo libre (Busy=1)."
+        puts "   -> ERROR: Stepping: Timeout en modo libre."
         return 0
     }
 }
@@ -239,11 +229,11 @@ if { [catch {
     # Leer Resultados SEQ
     set seq_results [list]
     puts "   Leyendo Salida SEQ..."
-    # Salida esperada 4x2. Stride REAL de salida = 4.
+    # Salida esperada 4x2.
     for {set y 0} {$y < 2} {incr y} {
         for {set x 0} {$x < 4} {incr x} {
-            # CORRECCIÓN: Usar 4 como stride de fila
-            set addr [expr 0x4000 + ($y * 4) + $x]
+            # CAMBIO: Usar 0x40000 (262144) como base de salida
+            set addr [expr 0x40000 + ($y * 4) + $x]
             set r [read_mem $addr]
             scan $r %b d
             lappend seq_results $d
@@ -252,11 +242,11 @@ if { [catch {
     puts "   Resultados SEQ: $seq_results"
 
     # ---------------------------------------------------------
-    # LIMPIEZA (Para asegurar que SIMD escribe)
+    # LIMPIEZA
     # ---------------------------------------------------------
-    puts "\n== 5. LIMPIANDO SALIDA (Borrando 0x4000...) =="
+    puts "\n== 5. LIMPIANDO SALIDA (Borrando 0x40000...) =="
     for {set k 0} {$k < 32} {incr k} {
-        write_mem [expr 0x4000 + $k] 0
+        write_mem [expr 0x40000 + $k] 0
     }
 
     # ---------------------------------------------------------
@@ -280,8 +270,8 @@ if { [catch {
     puts "   Leyendo Salida SIMD..."
     for {set y 0} {$y < 2} {incr y} {
         for {set x 0} {$x < 4} {incr x} {
-            # CORRECCIÓN: Usar 4 como stride de fila
-            set addr [expr 0x4000 + ($y * 4) + $x]
+            # CAMBIO: Usar 0x40000 como base de salida
+            set addr [expr 0x40000 + ($y * 4) + $x]
             set r [read_mem $addr]
             scan $r %b d
             lappend simd_results $d
@@ -310,18 +300,18 @@ if { [catch {
     #==========================================================
     # 9. LECTURA DE PERFORMANCE COUNTERS
     #==========================================================
-    puts "\n== 9. LECTURA DE PERFORMANCE COUNTERS =="
+    puts "\n== 9. LECTURA DE PERFORMANCE COUNTERS (Base 0x58000) =="
     
-    # Flops: F8/F9 (0xFFF8)
-    set flops [read_counter 0xFFF8]
+    # Flops: L en 0x58000
+    set flops [read_counter 0x58000]
     puts "   -> FLOPs: $flops"
     
-    # Reads: FA/FB (0xFFFA)
-    set reads [read_counter 0xFFFA]
+    # Reads: L en 0x58002
+    set reads [read_counter 0x58002]
     puts "   -> Lecturas de Memoria: $reads"
     
-    # Writes: FC/FD (0xFFFC)
-    set writes [read_counter 0xFFFC]
+    # Writes: L en 0x58004
+    set writes [read_counter 0x58004]
     puts "   -> Escrituras de Memoria: $writes"
     
 

@@ -1,4 +1,3 @@
-// connect.sv (VERSIÓN FINAL CON SINCRONIZACIÓN DE NIVEL)
 module connect(
     input  logic        tck,
     input  logic        tdi,
@@ -10,18 +9,18 @@ module connect(
     input  logic        v_uir,
     output logic        tdo,
 
-    // Interfaz Memoria (16 addr + 8 data)
+    // MODIFICADO: Interfaz Memoria (19 addr + 8 data)
     output logic        mem_we,
-    output logic [15:0] mem_addr,
+    output logic [18:0] mem_addr, // [18:0]
     output logic [7:0]  mem_data_in,
     input  logic [7:0]  mem_data_out,
 
     // Control hacia Datapath
     output logic        step_mode,
     output logic        step_pulse,
-    output logic        start_proc_pulse, // NIVEL
+    output logic        start_proc_pulse,
     
-    // CORRECCIÓN: Ahora son ENTRADAS (leemos el hardware)
+    // Status
     input  logic        hw_busy,  
     input  logic        hw_done,
 
@@ -44,13 +43,18 @@ module connect(
     integer i;
 
     logic [2:0]  DR0;
-    logic [23:0] DR_MEM;
+    // MODIFICADO: DR_MEM aumentado a 27 bits (19 addr + 8 data)
+    logic [26:0] DR_MEM; 
     logic [15:0] DR_IR;
 
     // Asignaciones Memoria
-    assign mem_addr    = DR_MEM[23:8];
+    // MODIFICADO: Mapeo de bits para 19 bits de direccion
+    assign mem_addr    = DR_MEM[26:8]; 
     assign mem_data_in = DR_MEM[7:0];
-    assign mem_we      = (instr == WRITE_MEM && v_udr && DR_MEM[23:8] < 16'hFFF0);
+    
+    // MODIFICADO: Protección de escritura MMIO en rango alto (0x7FFF0)
+    assign mem_we      = (instr == WRITE_MEM && v_udr && DR_MEM[26:8] < 19'h7FFF0);
+
     // TDO Mux
     always_comb begin
         case(instr)
@@ -70,9 +74,11 @@ module connect(
         end else begin
             case(instr)
                 BYPASS: if(v_sdr) DR0 <= {tdi, DR0[2:1]};
+                
+                // MODIFICADO: Lógica de shift para registro de 27 bits
                 READ_MEM, WRITE_MEM: begin
-                    if(v_sdr) DR_MEM <= {tdi, DR_MEM[23:1]};
-                    else if(v_cdr) DR_MEM <= {DR_MEM[23:8], mem_data_out}; 
+                    if(v_sdr) DR_MEM <= {tdi, DR_MEM[26:1]}; // Shift 27 bits
+                    else if(v_cdr) DR_MEM <= {DR_MEM[26:8], mem_data_out}; 
                 end
                 
                 REG_OP: begin
@@ -90,8 +96,9 @@ module connect(
         if(!aclr) begin
             for(i=0;i<16;i++) regfile[i] <= 0;
         end else begin
-            if(instr == WRITE_MEM && DR_MEM[23:8] >= 16'hFFF0) begin
-                 regfile[DR_MEM[23:8] - 16'hFFF0] <= DR_MEM[7:0];
+            // MODIFICADO: Detectar escritura MMIO en rango 0x7FFF0 - 0x7FFFF
+            if(instr == WRITE_MEM && DR_MEM[26:8] >= 19'h7FFF0) begin
+                 regfile[DR_MEM[26:8] - 19'h7FFF0] <= DR_MEM[7:0];
             end
             if(instr == REG_OP) begin
                 if (DR_IR[11:8] < 16) regfile[DR_IR[11:8]] <= DR_IR[7:0];
@@ -104,7 +111,7 @@ module connect(
     end
 
     // Instancias internas
-    assign start_proc_pulse = regfile[6][0]; // AHORA ES NIVEL
+    assign start_proc_pulse = regfile[6][0]; 
 
     step_unit u_step(.clk(tck), .aclr(aclr), .reg_f9(regfile[9]), .step_mode(step_mode), .step_pulse(step_pulse));
 
