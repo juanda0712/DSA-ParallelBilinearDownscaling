@@ -1,4 +1,3 @@
-// maquina_de_estados.sv
 `timescale 1ns/1ps
 
 module maquina_de_estados
@@ -74,6 +73,13 @@ module maquina_de_estados
   end
 
   assign ocupado = (estado == S_CARGA) || (estado == S_CALCULO);
-  assign listo   = (estado == S_ESPERA) || (estado == S_LISTO);
+  
+  // ---------------------------------------------------------
+  // CORRECCIÓN CRÍTICA AQUÍ ABAJO
+  // ---------------------------------------------------------
+  // Antes tenías: (estado == S_ESPERA) || (estado == S_LISTO)
+  // Eso causaba que la CU leyera datos antes de tiempo.
+  // Ahora forzamos a que la CU espere hasta que el cálculo termine REALMENTE.
+  assign listo   = (estado == S_LISTO); 
 
 endmodule

@@ -222,6 +222,17 @@ if { [catch {
 
     if {[wait_busy_low]} {
         puts "   -> Secuencial Terminado."
+        
+        # --- NUEVO: LEER CONTADORES AQUI (Mientras el HW está en estado DONE exitoso) ---
+        puts "\n   DEBUG: LECTURA DE CONTADORES (Post-Secuencial):"
+        set flops [read_counter 0x58000]
+        puts "   -> FLOPs: $flops"
+        set reads [read_counter 0x58002]
+        puts "   -> Lecturas: $reads"
+        set writes [read_counter 0x58004]
+        puts "   -> Escrituras: $writes"
+        # -------------------------------------------------------------------------------
+
     } else {
         puts "   -> ERROR: Secuencial falló."
     }
