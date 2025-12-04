@@ -324,6 +324,11 @@ if { [catch {
     # Writes: L en 0x58004
     set writes [read_counter 0x58004]
     puts "   -> Escrituras de Memoria: $writes"
+
+    # ... despues de leer writes ...
+    # Debug Y (0x58008)
+    set debug_y [read_counter 0x58008]
+    puts "   -> Debug Row (dst_y final): $debug_y"
     
 
 } res] } {
