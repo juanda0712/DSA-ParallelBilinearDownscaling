@@ -1,172 +1,200 @@
 import subprocess
 import os
 import sys
+import numpy as np
+import matplotlib.pyplot as plt
 
 # =============================================================================
-# CONFIGURACIÓN DE RUTAS (CRÍTICO)
+# MODELO DE REFERENCIA (PYTHON PURO)
 # =============================================================================
-DIR_QUARTUS_BIN = r"C:\intelFPGA_lite\23.1std\quartus\bin64"
+Q_SHIFT = 8
+Q_ROUND = 0x0080
+
+def to_q8_8(x): return x << Q_SHIFT
+def float_to_q8_8(x): return int(x * (1 << Q_SHIFT))
+def q8_8_mul(a, b): return (a * b) >> Q_SHIFT
+def from_q8_8_sat(x):
+    tmp = x + Q_ROUND
+    res = tmp >> Q_SHIFT
+    if res < 0: return 0
+    if res > 255: return 255
+    return res
+def lerp(a, b, t):
+    return a + q8_8_mul(b - a, t)
+
+def generar_referencia(w_in, h_in, scale):
+    """Genera la imagen esperada (GOLDEN REFERENCE)."""
+    print(f"   [Ref] Generando datos para {w_in}x{h_in}...")
+    w_out = int(w_in * scale)
+    h_out = int(h_in * scale)
+    step_q = float_to_q8_8(1.0 / scale)
+
+    # Patrón IDÉNTICO al TCL
+    input_img = []
+    for y in range(h_in):
+        for x in range(w_in):
+            val = ((y + 1) * 16) + x
+            input_img.append(val % 256)
+    
+    output_data = []
+    src_acc_y = 0
+
+    for dy in range(h_out):
+        src_acc_x = 0
+        sy_int = src_acc_y >> Q_SHIFT
+        fy = src_acc_y & 0xFF 
+
+        for dx in range(w_out):
+            sx_int = src_acc_x >> Q_SHIFT
+            fx = src_acc_x & 0xFF
+
+            if sx_int >= w_in - 1: sx_int = w_in - 2
+            if sy_int >= h_in - 1: sy_int = h_in - 2
+
+            idx_00 = sy_int * w_in + sx_int
+            idx_10 = sy_int * w_in + (sx_int + 1)
+            idx_01 = (sy_int + 1) * w_in + sx_int
+            idx_11 = (sy_int + 1) * w_in + (sx_int + 1)
+
+            p00 = to_q8_8(input_img[idx_00])
+            p10 = to_q8_8(input_img[idx_10])
+            p01 = to_q8_8(input_img[idx_01])
+            p11 = to_q8_8(input_img[idx_11])
+            
+            q_fx, q_fy = fx << Q_SHIFT, fy << Q_SHIFT
+            top = lerp(p00, p10, q_fx)
+            bot = lerp(p01, p11, q_fx)
+            res = from_q8_8_sat(lerp(top, bot, q_fy))
+            
+            output_data.append(res)
+            src_acc_x += step_q
+        src_acc_y += step_q
+    return output_data, input_img
+
+# =============================================================================
+# EJECUCIÓN FPGA
+# =============================================================================
+DIR_QUARTUS_BIN = r"C:\intelFPGA_lite\23.1std\quartus\bin64" 
 RUTA_QUARTUS_STP = os.path.join(DIR_QUARTUS_BIN, "quartus_stp.exe")
-
-RUTA_PROYECTO   = os.getcwd()
+RUTA_PROYECTO = os.getcwd()
 RUTA_TCL_SCRIPT = os.path.join(RUTA_PROYECTO, "run_fpga.tcl")
-RUTA_CPP_SOURCE = os.path.join(RUTA_PROYECTO, "modelo_referencia.cpp")
-RUTA_CPP_EXE    = os.path.join(RUTA_PROYECTO, "modelo.exe")
 
-
-def compilar_cpp():
-    print(f"Verificando modelo C++...")
-    
-    exe_existe = os.path.exists(RUTA_CPP_EXE)
-    
-    try:
-        cmd = ["g++", RUTA_CPP_SOURCE, "-o", RUTA_CPP_EXE, "-static"]
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
-        print("✅ Compilación exitosa (Nueva versión generada).")
-        
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        if exe_existe:
-            print("⚠️ Advertencia: No se pudo recompilar el C++ (g++ no encontrado o error).")
-            print("✅ USANDO 'modelo.exe' PREVIO (Modo Seguro).")
-        else:
-            print("\n❌ ERROR CRÍTICO: No se puede compilar C++ y no existe 'modelo.exe'.")
-            print(f"   g++ {os.path.basename(RUTA_CPP_SOURCE)} -o modelo.exe -static")
-            sys.exit(1)
-
-def ejecutar_cpp(w, h, scale):
-    """Ejecuta el binario C++ y captura la salida."""
-    try:
-        if not os.path.exists(RUTA_CPP_EXE):
-            print(f"❌ Error: No encuentro {RUTA_CPP_EXE}")
-            sys.exit(1)
-
-        cmd = [RUTA_CPP_EXE, str(w), str(h), str(scale)]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        
-        # Convertir salida "16 18 20..." a lista de enteros
-        return list(map(int, result.stdout.strip().split()))
-        
-    except Exception as e:
-        print(f"❌ Error ejecutando modelo C++: {e}")
-        sys.exit(1)
-
-def ejecutar_tcl(w, h, scale_hex):
-    """Ejecuta quartus_stp usando ruta absoluta."""
-    print(f"\n🔄 Ejecutando FPGA (Ancho={w}, Alto={h}, ScaleHex={scale_hex})...")
-    print("-" * 60)
-    
-    # Verificación de seguridad
+def ejecutar_fpga(w, h, scale_hex):
+    print(f"\n🔄 Ejecutando FPGA (TCL)...")
     if not os.path.exists(RUTA_QUARTUS_STP):
-        print(f"ERROR: No encuentro Quartus en: {RUTA_QUARTUS_STP}")
-        print("   -> Edita la variable DIR_QUARTUS_BIN en interface.py")
+        print(f"❌ Error: No encuentro quartus_stp.exe")
         sys.exit(1)
 
-    cmd = [
-        RUTA_QUARTUS_STP, 
-        "-t", RUTA_TCL_SCRIPT, 
-        str(w), str(h), scale_hex
-    ]
+    cmd = [RUTA_QUARTUS_STP, "-t", RUTA_TCL_SCRIPT, str(w), str(h), scale_hex]
     
     try:
-        # Ejecutamos el proceso manteniendo la consola abierta para ver logs
         process = subprocess.Popen(
-            cmd, 
-            cwd=DIR_QUARTUS_BIN, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE, 
-            text=True
+            cmd, cwd=DIR_QUARTUS_BIN, 
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
 
-        data_fpga = []
+        data_seq = []
+        data_simd = []
         
-        # Lectura de logs en tiempo real (Streaming)
         while True:
             line = process.stdout.readline()
-            if not line and process.poll() is not None:
-                break
+            if not line and process.poll() is not None: break
             if line:
-                linea_limpia = line.strip()
-                print(f"TCL> {linea_limpia}")
+                l = line.strip()
+                print(f"TCL> {l}")
                 
-                # Captura de datos
-                if "DATA_SEQ:" in linea_limpia:
-                    try:
-                        raw = linea_limpia.split("DATA_SEQ:")[1].strip()
-                        raw = raw.replace('{', '').replace('}', '') # Limpiar sintaxis TCL
-                        data_fpga = list(map(int, raw.split()))
-                    except:
-                        print("   (Error parseando datos del FPGA)")
-
-        print("-" * 60)
-        
-        if process.returncode != 0:
-            print(f"❌ El script TCL falló (Código {process.returncode})")
-            # Imprimir error si hubo
-            err_out = process.stderr.read()
-            if err_out: print(f"STDERR TCL:\n{err_out}")
-            sys.exit(1)
-            
-        return data_fpga
-
+                # CAPTURAR SECUENCIAL
+                if "DATA_SEQ:" in l:
+                    raw = l.split("DATA_SEQ:")[1].strip().replace('{','').replace('}','')
+                    try: data_seq = list(map(int, raw.split()))
+                    except: pass
+                
+                # CAPTURAR SIMD
+                if "DATA_SIMD:" in l:
+                    raw = l.split("DATA_SIMD:")[1].strip().replace('{','').replace('}','')
+                    try: data_simd = list(map(int, raw.split()))
+                    except: pass
+                    
+        return data_seq, data_simd
     except Exception as e:
-        print(f"❌ Error lanzando subprocess: {e}")
+        print(f"❌ Error TCL: {e}")
         sys.exit(1)
+
+def visualizar(w_in, h_in, scale, img_in, img_ref, img_simd):
+    w_out = int(w_in * scale)
+    h_out = int(h_in * scale)
+    try:
+        arr_in  = np.array(img_in, dtype=np.uint8).reshape((h_in, w_in))
+        arr_ref = np.array(img_ref, dtype=np.uint8).reshape((h_out, w_out))
+        arr_hw  = np.array(img_simd[:len(img_ref)], dtype=np.uint8).reshape((h_out, w_out))
+        
+        fig, ax = plt.subplots(1, 3, figsize=(10, 4))
+        ax[0].imshow(arr_in, cmap='gray', vmin=0, vmax=255); ax[0].set_title("Entrada")
+        ax[1].imshow(arr_ref, cmap='gray', vmin=0, vmax=255); ax[1].set_title("Golden (Python/C++)")
+        ax[2].imshow(arr_hw, cmap='gray', vmin=0, vmax=255); ax[2].set_title("FPGA (SIMD)")
+        plt.show()
+    except Exception as e:
+        print(f"⚠️ Error visualización: {e}")
 
 # =============================================================================
 # MAIN
 # =============================================================================
 def main():
-    print("=== INTERFAZ DE CONTROL FPGA v2.0 ===")
-    
-    # 1. ENTRADA DE DATOS
+    print("=== INTERFAZ DE CONTROL FPGA ===")
     try:
-        w_in = int(input("Ancho Imagen (e.g., 8): "))
-        h_in = int(input("Alto Imagen  (e.g., 4): "))
-        scale = float(input("Escala (0.5 a 1.0): "))
-    except ValueError:
-        print("Entrada inválida. Usa números.")
-        return
+        w_in = int(input("Ancho(EJ 64): "))
+        h_in = int(input("Alto(Ej 32): "))
+        scale = float(input("Escala(0.5 - 1.0): "))
+    except: return
 
-    # Cálculo Hexadecimal Q8.8
-    scale_int = int(scale * 256)
-    scale_hex = f"0x{scale_int:02X}"
+    scale_hex = f"0x{int(scale * 256):02X}"
     
-    print(f"\nConfiguración: {w_in}x{h_in}, Scale: {scale} (Hex: {scale_hex})")
+    # 1. REFERENCIA
+    golden_data, input_img = generar_referencia(w_in, h_in, scale)
 
-    # 2. MODELO DE REFERENCIA (C++)
-    compilar_cpp()
-    golden_data = ejecutar_cpp(w_in, h_in, scale)
-    print(f"C++ Generó {len(golden_data)} píxeles.")
-
-    # 3. HARDWARE (FPGA)
-    fpga_data = ejecutar_tcl(w_in, h_in, scale_hex)
+    # 2. FPGA
+    data_seq, data_simd = ejecutar_fpga(w_in, h_in, scale_hex)
     
-    # Recorte de seguridad (por si el FPGA leyó basura extra al final)
-    fpga_data = fpga_data[:len(golden_data)]
-    print(f"FPGA Retornó {len(fpga_data)} píxeles.")
+    # Recorte
+    len_ref = len(golden_data)
+    data_seq = data_seq[:len_ref]
+    data_simd = data_simd[:len_ref]
 
-    # 4. COMPARACIÓN Y REPORTE
-    print("\n=== REPORTE DE VALIDACIÓN ===")
-    print(f"{'IDX':<5} {'C++':<8} {'FPGA':<8} {'STATUS'}")
-    print("-" * 35)
+    # 3. REPORTE
+    print(f"\n📊 RESULTADOS ({len_ref} píxeles)")
+    print(f"{'IDX':<5} {'REF':<6} {'SEQ':<6} {'SIMD':<6} {'STATUS'}")
+    print("-" * 40)
+
+    err_seq = 0
+    err_simd = 0
     
-    mismatches = 0
-    for i, (gold, dut) in enumerate(zip(golden_data, fpga_data)):
-        status = "✅" if gold == dut else "❌"
-        if gold != dut: mismatches += 1
-        
-        # Mostrar errores o los primeros 10 datos correctos
-        if i < 10 or status == "❌":
-            print(f"{i:<5} {gold:<8} {dut:<8} {status}")
-            
-    if len(golden_data) > 10 and mismatches == 0:
-        print("... (resto de datos correctos ocultos) ...")
+    for i in range(len_ref):
 
-    print("-" * 35)
-    if mismatches == 0:
-        print("✅ ÉXITO TOTAL: El Hardware coincide bit a bit con el Modelo C++.")
+        g = golden_data[i]
+        s = data_seq[i] if i < len(data_seq) else None
+        p = data_simd[i] if i < len(data_simd) else None
+
+        ok_seq  = (s == g)
+        ok_simd = (p == g)
+
+        # Contadores de error
+        if not ok_seq:  err_seq  += 1
+        if not ok_simd: err_simd += 1
+
+        # Etiquetas
+        tag_seq  = "✅" if ok_seq else "❌"
+        tag_simd = "✅" if ok_simd else "❌"
+
+        # Mostrar fila (solo las primeras 10 y las que tengan error)
+        if i < 10 or not (ok_seq and ok_simd):
+            print(f"{i:<5}  {g:<6}  {s:<6} {tag_seq:<3}   {p:<6} {tag_simd:<3}")
+
+
+    if err_seq == 0 and err_simd == 0:
+        print("\n✅ ÉXITO TOTAL: Ambos modos coinciden con la referencia.")
+        visualizar(w_in, h_in, scale, input_img, golden_data, data_simd)
     else:
-        print(f"❌ FALLO: Se encontraron {mismatches} diferencias.")
+        print(f"\n❌ FALLOS: Seq={err_seq}, SIMD={err_simd}")
 
 if __name__ == "__main__":
     main()
